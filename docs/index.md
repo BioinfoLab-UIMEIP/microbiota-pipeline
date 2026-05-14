@@ -8,6 +8,7 @@ nav_order: 1
 [![R](https://img.shields.io/badge/R-%E2%89%A54.2-blue.svg)](https://www.r-project.org/)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)](#)
 [![conda](https://img.shields.io/badge/install%20with-conda-green.svg)](installation.html)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20185069.svg)](https://doi.org/10.5281/zenodo.20185069)
 
 **Systematic identification of disease-associated microbial species from 16S rRNA amplicon data in case-control studies**
 

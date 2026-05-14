@@ -128,7 +128,7 @@ Outputs are written to a timestamped subdirectory: `results_YYYYMMDD_HHMMSS/`
 
 If you use this pipeline, please cite:
 
-> Torres, R.C. (2026). Protocol for systematic identification of disease-associated microbial species from 16S rRNA amplicon data in case-control microbiome studies. *STAR Protocols* (in preparation).
+> Torres, R.C., Meléndez-Sánchez D., Payró-González M., Almaguer-Molina D., Torres J. Protocol for systematic identification of disease-associated microbial species from 16S rRNA amplicon data in case-control microbiome studies. (in preparation).
 
 ---
 

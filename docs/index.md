@@ -12,7 +12,13 @@ nav_order: 1
 
 **Systematic identification of disease-associated microbial species from 16S rRNA amplicon data in case-control studies**
 
-*Roberto C. Torres, PhD. — Bioinformatics Lab, Infectious Diseases Research Unit (UIMEIP), CMN SXXI, IMSS, Mexico City*
+*Bioinformatics Lab, Infectious Diseases Research Unit (UIMEIP), CMN SXXI, IMSS, Mexico City*
+
+**Authors:**
+Roberto C. Torres, PhD.
+Daniela Meléndez Sánchez, PhD.
+María Payró González, M.Sc.
+David Almaguer Molina, PhD.
 
 ---
 

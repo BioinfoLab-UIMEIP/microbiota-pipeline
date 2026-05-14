@@ -1,0 +1,12 @@
+name: microbiota16s
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - r-base=4.2
+  - cutadapt>=4.0
+  - vsearch>=2.23
+  - mafft>=7.5
+  - snp-dists>=0.8
+  - blast>=2.14

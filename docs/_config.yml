@@ -1,0 +1,20 @@
+theme: minima
+title: "16S Microbiota Pipeline"
+description: "Systematic identification of disease-associated microbial species from 16S amplicon data in case-control studies"
+baseurl: "/microbiota-pipeline"
+url: "https://bioinfolab-uimeip.github.io"
+author: "Roberto C. Torres"
+
+header_pages:
+  - installation.md
+  - configuration.md
+  - usage.md
+  - methods.md
+  - troubleshooting.md
+
+minima:
+  social_links:
+    - { platform: github, user_url: "https://github.com/BioinfoLab-UIMEIP/microbiota-pipeline" }
+
+plugins:
+  - jekyll-seo-tag

@@ -1,0 +1,29 @@
+# R
+.Rhistory
+.RData
+.Rapp.history
+*.Rproj
+.Rproj.user/
+
+# Pipeline outputs (never commit run results)
+results_*/
+results_test_*/
+
+# macOS
+.DS_Store
+
+# Large data / databases
+*.fastq.gz
+*.fasta.gz
+*.fa.gz
+*.bak
+
+# Logs
+*.log
+
+# Jekyll build output (local preview only)
+docs/_site/
+docs/.sass-cache/
+docs/.jekyll-cache/
+docs/Gemfile
+docs/Gemfile.lock

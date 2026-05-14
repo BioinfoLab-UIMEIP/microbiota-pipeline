@@ -1,0 +1,1201 @@
+---
+# =============================================================================
+# Script:      report_template.Rmd
+# Pipeline:    16S Microbiota Pipeline
+# Author:      Roberto C. Torres, PhD. <torres.roberto.c@gmail.com>
+# Institution: Bioinformatics Lab, Infectious Diseases Research Unit,
+#              CMN SXXI, IMSS, Mexico City
+# Description: flexdashboard template for interactive HTML report of pipeline results
+# =============================================================================
+title: "16S Microbiota Analysis Pipeline — Results Report"
+output:
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: scroll
+    theme: flatly
+    self_contained: true
+    navbar:
+      - { title: "Summary", href: "#resumen" }
+      - { title: "Medical Research Unit on Infectious and Parasitic Diseases (UIMEIP) · IMSS · Mexico City", align: right }
+params:
+  out_dir: ""
+  case_label: "Case"
+  ctrl_label: "Control"
+  group_col: "Group"
+  meta_file: ""
+  sample_id_col: "Sample_ID"
+  sample_type_filter: ~
+  sample_type_col: "sample_type"
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+load_pkg <- function(pkg) {
+  ok <- requireNamespace(pkg, quietly = TRUE)
+  if (ok) suppressPackageStartupMessages(library(pkg, character.only = TRUE))
+  ok
+}
+
+pkg_status <- c(
+  flexdashboard = load_pkg("flexdashboard"),
+  ggplot2 = load_pkg("ggplot2"),
+  plotly = load_pkg("plotly"),
+  DT = load_pkg("DT"),
+  dplyr = load_pkg("dplyr"),
+  tidyr = load_pkg("tidyr"),
+  knitr = load_pkg("knitr"),
+  base64enc = load_pkg("base64enc")
+)
+
+f <- function(...) file.path(params$out_dir, ...)
+safe_read <- function(path, ...) {
+  if (!file.exists(path)) return(NULL)
+  tryCatch(
+    read.table(
+      path,
+      header = TRUE,
+      stringsAsFactors = FALSE,
+      check.names = FALSE,
+      ...
+    ),
+    error = function(e) NULL
+  )
+}
+
+safe_read_csv <- function(path, ...) safe_read(path, sep = ",", ...)
+
+group_levels <- c(params$ctrl_label, params$case_label)
+distinct_colors <- function(n, seed = 42L) {
+  if (n <= 0L) return(character(0))
+  if (requireNamespace("randomcoloR", quietly = TRUE)) {
+    set.seed(seed)
+    randomcoloR::distinctColorPalette(n)
+  } else {
+    base_cols <- grDevices::colors()
+    base_cols <- base_cols[!grepl("white|grey|gray|light|pale", base_cols)]
+    set.seed(seed)
+    sample(base_cols, min(n, length(base_cols)), replace = n > length(base_cols))
+  }
+}
+run_seed <- suppressWarnings(as.integer(gsub("[^0-9]", "", basename(params$out_dir))))
+set.seed(if (!is.na(run_seed) && run_seed > 0L) run_seed else 42L)
+group_colors <- setNames(distinct_colors(2L, seed = if (!is.na(run_seed) && run_seed > 0L) run_seed else 42L), group_levels)
+
+has_pkgs <- function(pkgs) all(vapply(pkgs, function(x) isTRUE(pkg_status[[x]]) || requireNamespace(x, quietly = TRUE), logical(1)))
+
+box_tag <- function(text, type = "warning", title = NULL) {
+  if (requireNamespace("htmltools", quietly = TRUE)) {
+    bg <- switch(type, error = "#f8d7da", warning = "#fff3cd", info = "#d1ecf1", ok = "#d4edda", "#fff3cd")
+    border <- switch(type, error = "#f5c6cb", warning = "#ffeeba", info = "#bee5eb", ok = "#c3e6cb", "#ffeeba")
+    htmltools::div(
+      style = paste(
+        "padding:12px;border-radius:6px;border:1px solid", border,
+        ";background:", bg, ";margin:8px 0;"
+      ),
+      if (!is.null(title)) htmltools::tags$strong(paste0(title, " ")),
+      text
+    )
+  } else {
+    paste(if (!is.null(title)) paste0(title, ": "), text)
+  }
+}
+
+fmt_n <- function(x, digits = 3) {
+  if (length(x) == 0 || all(is.na(x))) return("NA")
+  if (is.numeric(x)) return(format(round(x[1], digits), trim = TRUE, scientific = FALSE))
+  as.character(x[1])
+}
+
+pct_lab <- function(x) paste0(round(100 * x), "%")
+
+flags_val <- function(key, step = NULL, default = NA_character_) {
+  if (is.null(flags_all) || !nrow(flags_all)) return(default)
+  idx <- flags_all$key == key
+  if (!is.null(step)) idx <- idx & flags_all$step == step
+  vals <- flags_all$value[idx]
+  if (!length(vals)) default else vals[1]
+}
+
+meta <- if (nzchar(params$meta_file)) safe_read_csv(params$meta_file) else NULL
+tss <- safe_read(f("filter", "asv_table_tss.tsv"), sep = "\t")
+tax <- safe_read(f("filter", "taxonomy_filtered.tsv"), sep = "\t")
+alpha_div <- safe_read(f("alpha", "alpha_diversity.tsv"), sep = "\t")
+alpha_wil <- safe_read(f("alpha", "alpha_wilcoxon.tsv"), sep = "\t")
+permanova <- safe_read(f("beta", "permanova.tsv"), sep = "\t")
+betadisper <- safe_read(f("beta", "betadisper.tsv"), sep = "\t")
+pcoa_wunifrac <- safe_read(f("beta", "pcoa_wunifrac.tsv"), sep = "\t")
+pcoa_uwunifrac <- safe_read(f("beta", "pcoa_uwunifrac.tsv"), sep = "\t")
+info_pcoa <- safe_read(f("informative", "informative_pcoa.tsv"), sep = "\t")
+prev_tbl <- safe_read(f("composition", "species_prevalence_mean_relative_abundance.tsv"), sep = "\t")
+top20_mean <- safe_read(f("composition", "top20_species_group_mean.tsv"), sep = "\t")
+case_unique <- safe_read(f("composition", "species_unique_cases.tsv"), sep = "\t")
+ctrl_unique <- safe_read(f("composition", "species_unique_controls.tsv"), sep = "\t")
+da_res <- safe_read(f("differential", "da_results.tsv"), sep = "\t")
+rf_imp <- safe_read(f("informative", "rf_importance.tsv"), sep = "\t")
+lda_scores <- safe_read(f("informative", "lda_scores.tsv"), sep = "\t")
+rf_means <- safe_read(f("informative", "rf_top_features_group_mean.tsv"), sep = "\t")
+
+flag_files <- list.files(f("flags"), pattern = "^flags_.*\\.tsv$", full.names = TRUE)
+flags_all <- if (length(flag_files)) {
+  do.call(
+    rbind,
+    Filter(Negate(is.null), lapply(flag_files, function(fp) safe_read(fp, sep = "\t")))
+  )
+} else {
+  NULL
+}
+
+if (!is.null(meta) && params$group_col %in% colnames(meta)) {
+  meta <- meta[meta[[params$group_col]] %in% group_levels, , drop = FALSE]
+  if (!is.null(params$sample_type_filter) && length(params$sample_type_filter) > 0 &&
+      nzchar(params$sample_type_filter[[1]]) &&
+      params$sample_type_col %in% colnames(meta)) {
+    meta <- meta[meta[[params$sample_type_col]] %in% params$sample_type_filter, , drop = FALSE]
+  }
+}
+
+# Contar solo muestras presentes en la tabla TSS (ground truth)
+if (!is.null(tss) && "sample_id" %in% colnames(tss) && !is.null(meta) &&
+    params$sample_id_col %in% colnames(meta) && params$group_col %in% colnames(meta)) {
+  analyzed_meta <- meta[meta[[params$sample_id_col]] %in% tss$sample_id, , drop = FALSE]
+  n_case <- sum(analyzed_meta[[params$group_col]] == params$case_label, na.rm = TRUE)
+  n_ctrl <- sum(analyzed_meta[[params$group_col]] == params$ctrl_label, na.rm = TRUE)
+} else if (!is.null(meta) && params$group_col %in% colnames(meta)) {
+  n_case <- sum(meta[[params$group_col]] == params$case_label, na.rm = TRUE)
+  n_ctrl <- sum(meta[[params$group_col]] == params$ctrl_label, na.rm = TRUE)
+} else {
+  n_case <- NA_integer_
+  n_ctrl <- NA_integer_
+}
+
+n_species_retained <- if (!is.null(tss)) {
+  max(0L, ncol(tss) - 1L)
+} else if (!is.null(tax)) {
+  nrow(tax)
+} else {
+  NA_integer_
+}
+
+build_dt <- function(df, caption = NULL, color_status = FALSE) {
+  if (!isTRUE(pkg_status[["DT"]]) || is.null(df) || !nrow(df)) {
+    return(box_tag("Table not available for this section.", "warning"))
+  }
+  tab <- DT::datatable(
+    df,
+    rownames = FALSE,
+    caption = caption,
+    options = list(pageLength = 8, scrollX = TRUE, dom = "tip")
+  )
+  if (color_status && "status" %in% colnames(df)) {
+    tab <- DT::formatStyle(
+      tab,
+      "status",
+      backgroundColor = DT::styleEqual(
+        c("ok", "warn", "error"),
+        c(NA, "#fff3cd", "#f8d7da")
+      )
+    )
+  }
+  tab
+}
+
+make_value_box <- function(value, caption, color) {
+  if (isTRUE(pkg_status[["flexdashboard"]])) {
+    flexdashboard::valueBox(value = value, caption = caption, color = color)
+  } else {
+    box_tag(paste(caption, value), type = "info")
+  }
+}
+```
+
+Summary {#resumen data-navmenu="Summary" data-icon="fa-home"}
+=====================================
+
+Column {data-width=280}
+-------------------------------------
+
+### About this report
+
+This report summarizes the results of the 16S microbiota diversity analysis
+pipeline. Each section corresponds to one analysis module.
+
+**Groups:**
+
+- **`r params$case_label`**: N = `r fmt_n(n_case, 0)`
+- **`r params$ctrl_label`**: N = `r fmt_n(n_ctrl, 0)`
+
+**Results directory:**  
+`r basename(params$out_dir)`
+
+### Contact
+
+**Roberto C. Torres, PhD.**  
+Medical Research Unit on Infectious and Parasitic Diseases (UIMEIP)  
+Instituto Mexicano del Seguro Social (IMSS)  
+Mexico City, Mexico  
+[torres.roberto.c@gmail.com](mailto:torres.roberto.c@gmail.com)
+
+Column {data-width=720}
+-------------------------------------
+
+### Analysis Parameters
+
+```{r resumen-analisis}
+# Leer region y kit desde flags
+region_val  <- flags_val("region",  default = flags_val("REGION",  default = "—"))
+kit_val     <- flags_val("kit",     default = flags_val("KIT",     default = "—"))
+trunc_r1    <- flags_val("trunc_r1", step = "01_qc", default = "—")
+trunc_r2    <- flags_val("trunc_r2", step = "01_qc", default = "—")
+n_qc        <- flags_val("n_qc",    step = "01_qc", default = "—")
+stype_flag  <- flags_val("sample_type_filter", step = "01_qc", default = "all")
+n_raw       <- flags_val("n_samples_raw", step = "01_qc", default = "—")
+n_filt      <- flags_val("n_samples_after_filter", step = "01_qc", default = "—")
+
+items <- list(
+  c("Analyzed sample type",         stype_flag),
+  c(paste0(params$case_label, " samples (in table)"), fmt_n(n_case, 0)),
+  c(paste0(params$ctrl_label, " samples (in table)"), fmt_n(n_ctrl, 0)),
+  c("Total samples (manifest)",     n_raw),
+  c("Samples after filtering",      n_filt),
+  c("Hypervariable region",         region_val),
+  c("Sequencing kit",               kit_val),
+  c("TRUNC_LEN R1 / R2",           paste(trunc_r1, "/", trunc_r2)),
+  c("Retained species/features",    fmt_n(n_species_retained, 0)),
+  c("Results directory",            basename(params$out_dir))
+)
+
+df_sum <- as.data.frame(do.call(rbind, items), stringsAsFactors = FALSE)
+colnames(df_sum) <- c("Parameter", "Value")
+
+if (requireNamespace("knitr", quietly = TRUE)) {
+  knitr::kable(df_sum, format = "html", escape = FALSE) |>
+    (\(x) if (requireNamespace("kableExtra", quietly = TRUE))
+      kableExtra::kable_styling(x, bootstrap_options = c("striped","hover"), full_width = FALSE)
+    else x)()
+} else {
+  build_dt(df_sum)
+}
+```
+
+Quality Control {#qc data-navmenu="QC" data-icon="fa-chart-line"}
+=====================================
+
+Column {data-width=280}
+-------------------------------------
+
+### Quality Control
+
+```{r qc-desc}
+trunc_r1_v <- flags_val("trunc_r1", step = "01_qc", default = "N/A")
+trunc_r2_v <- flags_val("trunc_r2", step = "01_qc", default = "N/A")
+
+if (requireNamespace("htmltools", quietly = TRUE)) {
+  htmltools::tagList(
+    htmltools::HTML(paste0(
+      "<p><strong>Fig. 1.</strong> Quality Phred profiles (median ± IQR) for R1 and R2 reads, calculated ",
+      "on a representative subsample. The dashed red line marks the quality threshold (Q25); ",
+      "the dashed green line shows the suggested truncation point. Lower panels show read ",
+      "length distributions. The orange dashed line marks the 5th percentile (p05).</p>",
+      "<p><strong>Suggested truncation:</strong> R1 = ", trunc_r1_v, " bp / R2 = ", trunc_r2_v, " bp</p>"
+    ))
+  )
+} else {
+  cat(paste("Suggested truncation: R1 =", trunc_r1_v, "bp / R2 =", trunc_r2_v, "bp"))
+}
+```
+
+Column {data-width=720}
+-------------------------------------
+
+### Fig. 1. Sequencing Quality Control
+```{r qc-embed, fig.height=9, fig.width=13}
+qc_pdf <- f("qc", "qc_report.pdf")
+if (file.exists(qc_pdf)) {
+  if (requireNamespace("base64enc", quietly = TRUE) && requireNamespace("htmltools", quietly = TRUE)) {
+    b64 <- base64enc::base64encode(qc_pdf)
+    htmltools::tags$iframe(
+      src = paste0("data:application/pdf;base64,", b64),
+      width  = "100%",
+      height = "900px",
+      style  = "border:none;"
+    )
+  } else {
+    box_tag("The QC PDF exists, but it could not be embedded because base64enc and/or htmltools are missing.", "warning")
+  }
+} else {
+  box_tag(paste0(
+    "qc/qc_report.pdf was not found in the results directory. ",
+    "Please verify that step 01_qc.R completed successfully."
+  ), "warning")
+}
+```
+
+Taxonomic Composition {data-navmenu="Composition"}
+=====================================
+
+Column {data-width=280}
+-------------------------------------
+
+### Taxonomic Composition
+
+**Fig. 1.** Venn diagram showing species overlap between groups.
+
+**Fig. 2.** Stacked bar chart of mean relative abundance for the top N species
+per group (TSS-normalized).
+
+**Fig. 3.** Scatter plot comparing per-species prevalence between groups. Species
+detected exclusively in one group appear on the axes.
+
+Column {data-width=720}
+-------------------------------------
+
+### Fig. 1. Venn Diagram of Species Overlap Between Groups
+
+```{r venn-especies}
+req_venn <- c("ggplot2")
+if (is.null(prev_tbl) || !nrow(prev_tbl)) {
+  box_tag("No prevalence table is available to generate the Venn diagram.", "warning")
+} else {
+  case_sp <- unique(prev_tbl$taxon[
+    prev_tbl[[params$group_col]] == params$case_label & prev_tbl$prevalence > 0
+  ])
+  ctrl_sp <- unique(prev_tbl$taxon[
+    prev_tbl[[params$group_col]] == params$ctrl_label & prev_tbl$prevalence > 0
+  ])
+  n_shared   <- length(intersect(case_sp, ctrl_sp))
+  n_case_exc <- length(setdiff(case_sp, ctrl_sp))
+  n_ctrl_exc <- length(setdiff(ctrl_sp, case_sp))
+
+  if (requireNamespace("ggvenn", quietly = TRUE)) {
+    venn_fill <- distinct_colors(2L, seed = if (!is.na(run_seed) && run_seed > 0L) run_seed else 42L)
+    venn_list <- setNames(list(case_sp, ctrl_sp), c(params$case_label, params$ctrl_label))
+    p_venn <- ggvenn::ggvenn(
+      venn_list,
+      fill_color   = unname(venn_fill),
+      stroke_size  = 0.5,
+      set_name_size = 4
+    ) +
+      ggplot2::labs(
+        caption = paste0(
+          "Shared: ", n_shared,
+          " | Exclusive to ", params$case_label, ": ", n_case_exc,
+          " | Exclusive to ", params$ctrl_label, ": ", n_ctrl_exc
+        )
+      ) +
+      ggplot2::theme(plot.caption = ggplot2::element_text(size = 9))
+    print(p_venn)
+  } else {
+    df_venn <- data.frame(
+      Category = c(
+        paste0("Exclusive to ", params$case_label),
+        "Shared",
+        paste0("Exclusive to ", params$ctrl_label)
+      ),
+      N = c(n_case_exc, n_shared, n_ctrl_exc)
+    )
+    build_dt(df_venn, caption = "Species overlap between groups")
+  }
+}
+```
+
+### Fig. 2. Top Species by Mean Relative Abundance
+
+```{r top-especies-abundancia}
+req <- c("ggplot2", "dplyr")
+if (!has_pkgs(req) || is.null(top20_mean) || !nrow(top20_mean)) {
+  box_tag("There are not enough data to reconstruct the top taxonomic composition.", "warning")
+} else {
+  taxa <- unique(as.character(top20_mean$taxon))
+  taxa_palette <- setNames(distinct_colors(length(taxa), seed = if (!is.na(run_seed) && run_seed > 0L) run_seed else 42L), taxa)
+  p_top20 <- ggplot2::ggplot(
+    top20_mean,
+    ggplot2::aes(
+      x = .data[[params$group_col]],
+      y = mean_rel_abundance,
+      fill = taxon,
+      text = paste0(
+        "Group: ", .data[[params$group_col]],
+        "<br>Taxon: ", taxon,
+        "<br>Mean abundance: ", signif(mean_rel_abundance, 3)
+      )
+    )
+  ) +
+    ggplot2::geom_bar(stat = "identity", position = "fill", width = 0.8) +
+    ggplot2::scale_fill_manual(values = taxa_palette) +
+    ggplot2::scale_y_continuous(labels = pct_lab) +
+    ggplot2::labs(
+      title = paste0("Top ", length(taxa), " species by mean relative abundance"),
+      x = "",
+      y = "Fraction of total",
+      fill = NULL
+    ) +
+    ggplot2::theme_minimal(base_size = 10)
+  if (isTRUE(pkg_status[["plotly"]])) {
+    plotly::ggplotly(p_top20, tooltip = "text")
+  } else {
+    p_top20
+  }
+}
+```
+
+### Fig. 3. Prevalence Scatter Plot Between Groups
+
+```{r dispersion-prevalencia-grupos}
+req <- c("ggplot2", "dplyr", "tidyr")
+if (!has_pkgs(req) || is.null(prev_tbl) || !nrow(prev_tbl)) {
+  box_tag("No prevalence table is available for this section.", "warning")
+} else {
+  prev_wide <- tidyr::pivot_wider(
+    prev_tbl[, intersect(c("taxon", params$group_col, "prevalence", "class"), colnames(prev_tbl)), drop = FALSE],
+    names_from = dplyr::all_of(params$group_col),
+    values_from = prevalence,
+    values_fill = 0
+  )
+  if (!all(c(params$ctrl_label, params$case_label) %in% colnames(prev_wide))) {
+    box_tag("The prevalence table does not contain both expected group columns.", "warning")
+  } else {
+    prev_wide$ctrl_prev <- prev_wide[[params$ctrl_label]]
+    prev_wide$case_prev <- prev_wide[[params$case_label]]
+    prev_wide$class <- if ("class" %in% colnames(prev_wide)) prev_wide$class else "Shared"
+    label_df <- prev_wide[prev_wide$case_prev > 10 | prev_wide$ctrl_prev > 10, , drop = FALSE]
+    cls_cols <- c(Shared = "grey60")
+    cls_cols[params$case_label] <- unname(group_colors[params$case_label])
+    cls_cols[params$ctrl_label] <- unname(group_colors[params$ctrl_label])
+    p_prev <- ggplot2::ggplot(
+      prev_wide,
+      ggplot2::aes(
+        x = ctrl_prev,
+        y = case_prev,
+        color = class,
+        text = paste0(
+          "Taxon: ", taxon,
+          "<br>", params$ctrl_label, ": ", ctrl_prev,
+          "<br>", params$case_label, ": ", case_prev,
+          "<br>Class: ", class
+        )
+      )
+    ) +
+      ggplot2::geom_point(size = 2.2, alpha = 0.8) +
+      ggplot2::scale_color_manual(values = cls_cols, drop = FALSE) +
+      ggplot2::labs(
+        title = "Per-species prevalence between groups",
+        x = paste0("Prevalence in ", params$ctrl_label),
+        y = paste0("Prevalence in ", params$case_label),
+        color = "Class"
+      ) +
+      ggplot2::theme_minimal(base_size = 10)
+    if (requireNamespace("ggrepel", quietly = TRUE) && nrow(label_df)) {
+      p_prev <- p_prev + ggrepel::geom_text_repel(
+        data = label_df,
+        ggplot2::aes(label = taxon),
+        size = 2.8,
+        show.legend = FALSE
+      )
+    }
+    if (isTRUE(pkg_status[["plotly"]])) {
+      plotly::ggplotly(p_prev, tooltip = "text")
+    } else {
+      p_prev
+    }
+  }
+}
+```
+
+Alpha Diversity {data-navmenu="Diversity"}
+=====================================
+
+Column {data-width=280}
+-------------------------------------
+
+### Alpha Diversity
+
+Violin plots show the distribution of four alpha diversity indices per group.
+The inner box shows median and IQR; jittered points represent individual samples.
+P-value annotations correspond to Wilcoxon tests with Benjamini-Hochberg correction.
+
+**Fig. 5.** Alpha diversity metrics: Observed richness, Pielou evenness, Shannon H',
+and Simpson 1-D.
+
+Column {data-width=720}
+-------------------------------------
+
+### Alpha Diversity Metrics
+
+```{r alpha-metricas}
+req <- c("ggplot2")
+if (!has_pkgs(req) || is.null(alpha_div) || !nrow(alpha_div) || is.null(alpha_wil) || !nrow(alpha_wil)) {
+  box_tag("Complete alpha diversity data are not available to build all four plots.", "warning")
+} else {
+  metrics <- c(observed = "Observed richness", evenness = "Pielou evenness", shannon = "Shannon H'", simpson = "Simpson 1-D")
+  alpha_div <- alpha_div[alpha_div[[params$group_col]] %in% group_levels, , drop = FALSE]
+  alpha_div[[params$group_col]] <- factor(alpha_div[[params$group_col]], levels = group_levels)
+  plot_metric <- function(metric, label) {
+    p_adj_val <- alpha_wil$p_adj[alpha_wil$metric == metric]
+    p_adj_val <- if (length(p_adj_val)) p_adj_val[1] else NA_real_
+    p_label   <- if (!is.na(p_adj_val)) {
+      if      (p_adj_val < 0.001) "p < 0.001"
+      else if (p_adj_val < 0.05)  paste0("p = ", signif(p_adj_val, 2))
+      else                         paste0("p = ", signif(p_adj_val, 2), " (ns)")
+    } else { "p = N/A" }
+    y_max <- max(alpha_div[[metric]], na.rm = TRUE)
+    y_ann <- y_max * 1.08
+    ggplot2::ggplot(
+      alpha_div,
+      ggplot2::aes(
+        x = .data[[params$group_col]],
+        y = .data[[metric]],
+        fill = .data[[params$group_col]],
+        text = paste0(
+          "Group: ", .data[[params$group_col]],
+          "<br>", label, ": ", signif(.data[[metric]], 4)
+        )
+      )
+    ) +
+      ggplot2::geom_violin(trim = FALSE, alpha = 0.55) +
+      ggplot2::geom_boxplot(width = 0.14, outlier.shape = NA, alpha = 0.85, color = "black") +
+      ggplot2::geom_jitter(width = 0.1, size = 1, alpha = 0.4, show.legend = FALSE) +
+      ggplot2::annotate("segment",
+        x = 1, xend = 2, y = y_ann, yend = y_ann, color = "black") +
+      ggplot2::annotate("text",
+        x = 1.5, y = y_ann * 1.02, label = p_label, size = 3.2) +
+      ggplot2::scale_fill_manual(values = group_colors) +
+      ggplot2::labs(title = label, x = "", y = label) +
+      ggplot2::theme_minimal(base_size = 10) +
+      ggplot2::theme(legend.position = "none")
+  }
+  p_list <- Map(plot_metric, names(metrics), unname(metrics))
+  if (isTRUE(pkg_status[["plotly"]])) {
+    # geom_violin fails in ggplotly with small groups; use boxplot+jitter for interactive version
+    plot_metric_plotly <- function(metric, label) {
+      p_adj_val <- alpha_wil$p_adj[alpha_wil$metric == metric]
+      p_adj_val <- if (length(p_adj_val)) p_adj_val[1] else NA_real_
+      p_label   <- if (!is.na(p_adj_val)) {
+        if      (p_adj_val < 0.001) "p < 0.001"
+        else if (p_adj_val < 0.05)  paste0("p = ", signif(p_adj_val, 2))
+        else                         paste0("p = ", signif(p_adj_val, 2), " (ns)")
+      } else { "p = N/A" }
+      y_max <- max(alpha_div[[metric]], na.rm = TRUE)
+      y_ann <- y_max * 1.08
+      ggplot2::ggplot(
+        alpha_div,
+        ggplot2::aes(
+          x = .data[[params$group_col]],
+          y = .data[[metric]],
+          fill = .data[[params$group_col]],
+          text = paste0("Group: ", .data[[params$group_col]],
+                        "<br>", label, ": ", signif(.data[[metric]], 4))
+        )
+      ) +
+        ggplot2::geom_boxplot(width = 0.4, outlier.shape = NA, alpha = 0.8, color = "black") +
+        ggplot2::geom_jitter(width = 0.12, size = 1.2, alpha = 0.5, show.legend = FALSE) +
+        ggplot2::annotate("segment",
+          x = 1, xend = 2, y = y_ann, yend = y_ann, color = "black") +
+        ggplot2::annotate("text",
+          x = 1.5, y = y_ann * 1.02, label = p_label, size = 3.2) +
+        ggplot2::scale_fill_manual(values = group_colors) +
+        ggplot2::labs(title = label, x = "", y = label) +
+        ggplot2::theme_minimal(base_size = 10) +
+        ggplot2::theme(legend.position = "none")
+    }
+    p_list_plotly <- Map(plot_metric_plotly, names(metrics), unname(metrics))
+    plotly::subplot(
+      lapply(p_list_plotly, function(p) plotly::ggplotly(p, tooltip = "text")),
+      nrows = 2,
+      margin = 0.04,
+      titleX = TRUE,
+      titleY = TRUE
+    )
+  } else if (requireNamespace("patchwork", quietly = TRUE)) {
+    p_list[[1]] + p_list[[2]] + p_list[[3]] + p_list[[4]] + patchwork::plot_layout(ncol = 2)
+  } else if (requireNamespace("gridExtra", quietly = TRUE)) {
+    gridExtra::grid.arrange(grobs = p_list, ncol = 2)
+  } else {
+    box_tag("plotly, patchwork, or gridExtra is required to combine the four alpha metrics.", "warning")
+  }
+}
+```
+
+### Wilcoxon Test
+
+```{r}
+if (is.null(alpha_wil) || !nrow(alpha_wil)) {
+  box_tag("The adjusted Wilcoxon table was not found.", "warning")
+} else {
+  build_dt(alpha_wil[, intersect(c("metric", "comparison", "p_adj"), colnames(alpha_wil)), drop = FALSE], caption = "Wilcoxon test")
+}
+```
+
+Beta Diversity {data-navmenu="Diversity"}
+=====================================
+
+Column {data-width=280}
+-------------------------------------
+
+### Beta Diversity
+
+**Fig. 6.** PCoA ordinations based on two beta diversity metrics:
+
+- **Bray-Curtis** — abundance-weighted compositional dissimilarity
+- **Jaccard** — presence/absence compositional dissimilarity
+
+Each point is a sample; ellipses show 95% confidence intervals per group.
+PERMANOVA R² = fraction of variance explained by group (999 permutations).
+Betadisper tests homogeneity of dispersion.
+
+*Weighted and Unweighted UniFrac are computed using the most abundant
+representative ASV sequence per species, aligned with MAFFT, and a
+neighbor-joining tree. They require `ape` and `GUniFrac` packages and
+`taxonomy_filtered.tsv` from the filter step.*
+
+Column {data-width=720, .tabset}
+-------------------------------------
+
+```{r beta-pcoa-setup, include=FALSE}
+.beta_status <- NULL
+.p_bc <- .p_jc <- .p_wuf <- .p_uwuf <- NULL
+
+make_ord <- function(dist_obj, metric_key, title) {
+  ord <- cmdscale(dist_obj, k = 2, eig = TRUE)
+  eig <- ord$eig; eig[eig < 0] <- 0
+  pct <- round(100 * eig / sum(eig), 1)
+  d <- data.frame(
+    sample_id = rownames(ord$points),
+    PC1       = ord$points[, 1],
+    PC2       = ord$points[, 2],
+    group     = grp,
+    stringsAsFactors = FALSE
+  )
+  perm_row <- if (!is.null(permanova) && "metric" %in% colnames(permanova))
+    permanova[permanova$metric == metric_key, , drop = FALSE] else NULL
+  ann <- if (!is.null(perm_row) && nrow(perm_row))
+    paste0("R2 = ", signif(perm_row$R2[1], 3), " | p = ", signif(perm_row$p_value[1], 3))
+  else "PERMANOVA not available"
+  p <- ggplot2::ggplot(d, ggplot2::aes(x = PC1, y = PC2, color = group,
+            text = paste0("Sample: ", sample_id, "<br>Group: ", group))) +
+    ggplot2::geom_point(size = 2.2, alpha = 0.85)
+  if (length(unique(d$group)) > 1 && all(table(d$group) >= 3))
+    p <- p + ggplot2::stat_ellipse(level = 0.95, linetype = 2)
+  p + ggplot2::annotate("text", x = -Inf, y = Inf, label = ann,
+          hjust = -0.05, vjust = 1.2, size = 3) +
+    ggplot2::scale_color_manual(values = group_colors) +
+    ggplot2::labs(title = title,
+      x = paste0("PCoA1 (", pct[1], "%)"),
+      y = paste0("PCoA2 (", pct[2], "%)"),
+      color = "Group") +
+    ggplot2::theme_minimal(base_size = 10)
+}
+
+make_ord_from_tsv <- function(tsv_df, metric_key, title) {
+  if (is.null(tsv_df) || !nrow(tsv_df)) return(NULL)
+  req_cols <- c("sample_id", "PC1", "PC2", "group", "pct1", "pct2")
+  if (!all(req_cols %in% colnames(tsv_df))) return(NULL)
+  tsv_df <- tsv_df[tsv_df$group %in% group_levels, , drop = FALSE]
+  if (!nrow(tsv_df)) return(NULL)
+  perm_row <- if (!is.null(permanova) && "metric" %in% colnames(permanova))
+    permanova[permanova$metric == metric_key, , drop = FALSE] else NULL
+  ann <- if (!is.null(perm_row) && nrow(perm_row))
+    paste0("R2 = ", signif(perm_row$R2[1], 3), " | p = ", signif(perm_row$p_value[1], 3))
+  else "PERMANOVA not available"
+  p <- ggplot2::ggplot(tsv_df, ggplot2::aes(x = PC1, y = PC2, color = group,
+            text = paste0("Sample: ", sample_id, "<br>Group: ", group))) +
+    ggplot2::geom_point(size = 2.2, alpha = 0.85)
+  if (length(unique(tsv_df$group)) > 1 && all(table(tsv_df$group) >= 3))
+    p <- p + ggplot2::stat_ellipse(level = 0.95, linetype = 2)
+  p + ggplot2::annotate("text", x = -Inf, y = Inf, label = ann,
+          hjust = -0.05, vjust = 1.2, size = 3) +
+    ggplot2::scale_color_manual(values = group_colors) +
+    ggplot2::labs(title = title,
+      x = paste0("PCoA1 (", tsv_df$pct1[1], "%)"),
+      y = paste0("PCoA2 (", tsv_df$pct2[1], "%)"),
+      color = "Group") +
+    ggplot2::theme_minimal(base_size = 10)
+}
+
+if (!has_pkgs(c("ggplot2")) || is.null(tss) || is.null(meta) || !nrow(tss) || !nrow(meta)) {
+  .beta_status <- box_tag("There are not enough data to calculate beta diversity ordination.", "warning")
+} else if (!requireNamespace("vegan", quietly = TRUE)) {
+  .beta_status <- box_tag("The vegan package is not available. Only the PERMANOVA and betadisper tables can be shown.", "warning")
+} else {
+  meta_beta <- meta[, unique(c(params$sample_id_col, params$group_col)), drop = FALSE]
+  beta_df   <- merge(tss, meta_beta, by.x = "sample_id", by.y = params$sample_id_col)
+  beta_df   <- beta_df[beta_df[[params$group_col]] %in% group_levels, , drop = FALSE]
+  if (nrow(beta_df) < 3L) {
+    .beta_status <- box_tag("There are fewer than three filtered samples available to calculate PCoA.", "warning")
+  } else {
+    mat <- as.matrix(beta_df[, setdiff(colnames(tss), "sample_id"), drop = FALSE])
+    rownames(mat) <- beta_df$sample_id
+    grp <- factor(beta_df[[params$group_col]], levels = group_levels)
+    .p_bc   <- make_ord(vegan::vegdist(mat, method = "bray"), "bray_curtis", "PCoA Bray-Curtis")
+    .p_jc   <- make_ord(vegan::vegdist(mat > 0, method = "jaccard", binary = TRUE), "jaccard", "PCoA Jaccard")
+    .p_wuf  <- make_ord_from_tsv(pcoa_wunifrac,  "weighted_unifrac",   "PCoA Weighted UniFrac")
+    .p_uwuf <- make_ord_from_tsv(pcoa_uwunifrac, "unweighted_unifrac", "PCoA Unweighted UniFrac")
+  }
+}
+```
+
+### Fig. 6a. PCoA — Bray-Curtis
+
+```{r}
+if (!is.null(.beta_status)) {
+  .beta_status
+} else if (isTRUE(pkg_status[["plotly"]])) {
+  plotly::ggplotly(.p_bc, tooltip = "text")
+} else {
+  box_tag("Plotly is not available.", "info")
+}
+```
+
+### Fig. 6b. PCoA — Jaccard
+
+```{r}
+if (!is.null(.beta_status)) {
+  .beta_status
+} else if (isTRUE(pkg_status[["plotly"]])) {
+  plotly::ggplotly(.p_jc, tooltip = "text")
+} else {
+  box_tag("Plotly is not available.", "info")
+}
+```
+
+### Fig. 6c. PCoA — Weighted UniFrac
+
+```{r}
+if (!is.null(.beta_status)) {
+  .beta_status
+} else if (is.null(.p_wuf)) {
+  box_tag("Weighted UniFrac not available: rerun step 08_beta.R to compute it (requires ape, GUniFrac, and taxonomy_filtered.tsv).", "info")
+} else if (isTRUE(pkg_status[["plotly"]])) {
+  plotly::ggplotly(.p_wuf, tooltip = "text")
+} else {
+  box_tag("Plotly is not available.", "info")
+}
+```
+
+### Fig. 6d. PCoA — Unweighted UniFrac
+
+```{r}
+if (!is.null(.beta_status)) {
+  .beta_status
+} else if (is.null(.p_uwuf)) {
+  box_tag("Unweighted UniFrac not available: rerun step 08_beta.R to compute it (requires ape, GUniFrac, and taxonomy_filtered.tsv).", "info")
+} else if (isTRUE(pkg_status[["plotly"]])) {
+  plotly::ggplotly(.p_uwuf, tooltip = "text")
+} else {
+  box_tag("Plotly is not available.", "info")
+}
+```
+
+### Fig. 6e. Beta Diversity Statistics
+
+```{r}
+if (!requireNamespace("htmltools", quietly = TRUE)) {
+  box_tag("htmltools is not available to arrange both tables side by side.", "warning")
+} else {
+  htmltools::tagList(
+    htmltools::div(
+      style = "width:49%;display:inline-block;vertical-align:top;",
+      htmltools::tags$h4("PERMANOVA"),
+      build_dt(permanova)
+    ),
+    htmltools::div(
+      style = "width:49%;display:inline-block;vertical-align:top;margin-left:1%;",
+      htmltools::tags$h4("betadisper"),
+      build_dt(betadisper)
+    )
+  )
+}
+```
+
+Prevalence and Group-Specific Species {data-navmenu="Composition"}
+=====================================
+
+Column {data-width=280}
+-------------------------------------
+
+### Prevalence and Group-Specific Species
+
+**Fig. 4a.** Bar and dot chart for species detected exclusively in
+`r params$case_label`. Bars = prevalence (left axis); dots = mean relative
+abundance (right axis).
+
+**Fig. 4b.** Same for species detected exclusively in `r params$ctrl_label`.
+
+Column {data-width=720}
+-------------------------------------
+
+### Fig. 4a. Species Exclusive to `r params$case_label`
+
+```{r excl-case}
+req <- c("ggplot2")
+if (!has_pkgs(req) || is.null(prev_tbl) || !nrow(prev_tbl) || is.null(case_unique) || !nrow(case_unique)) {
+  box_tag("No case-exclusive species are available for this visualization.", "warning")
+} else {
+  species_col <- colnames(case_unique)[1]
+  case_species <- unique(case_unique[[species_col]])
+  sp_data <- prev_tbl[prev_tbl$taxon %in% case_species, , drop = FALSE]
+  if (!nrow(sp_data)) {
+    box_tag("The exclusive-species list does not match the prevalence table.", "warning")
+  } else {
+    case_prev <- sp_data[sp_data[[params$group_col]] == params$case_label, c("taxon", "prevalence"), drop = FALSE]
+    ord <- case_prev$taxon[order(case_prev$prevalence, decreasing = FALSE)]
+    sp_data$taxon <- factor(sp_data$taxon, levels = ord)
+    max_prev_val   <- max(sp_data$prevalence, na.rm = TRUE)
+    max_abund_val  <- max(sp_data$mean_rel_abundance * 100, na.rm = TRUE)
+    ab_scale       <- if (is.finite(max_abund_val) && max_abund_val > 0)
+                        max_prev_val / max_abund_val else 1
+    p_case <- ggplot2::ggplot(sp_data, ggplot2::aes(x = taxon)) +
+      ggplot2::geom_bar(
+        ggplot2::aes(
+          y = prevalence,
+          fill = .data[[params$group_col]],
+          text = paste0("Taxon: ", taxon, "<br>Prevalence: ", prevalence)
+        ),
+        stat = "identity",
+        position = "dodge",
+        alpha = 0.55,
+        width = 0.7
+      ) +
+      ggplot2::geom_point(
+        ggplot2::aes(
+          y = mean_rel_abundance * 100 * ab_scale,
+          color = .data[[params$group_col]],
+          text = paste0("Taxon: ", taxon, "<br>Mean relative abundance (%): ", signif(mean_rel_abundance * 100, 3))
+        ),
+        position = ggplot2::position_dodge(width = 0.7),
+        size = 2.8
+      ) +
+      ggplot2::scale_fill_manual(values = group_colors) +
+      ggplot2::scale_color_manual(values = group_colors) +
+      ggplot2::scale_y_continuous(
+        name     = "Prevalence (N samples)",
+        sec.axis = ggplot2::sec_axis(~ . / ab_scale, name = "Mean relative abundance (%)")
+      ) +
+      ggplot2::coord_flip() +
+      ggplot2::labs(x = "", fill = NULL, color = NULL) +
+      ggplot2::theme_minimal(base_size = 10)
+    if (isTRUE(pkg_status[["plotly"]])) {
+      plotly::ggplotly(p_case, tooltip = "text")
+    } else {
+      p_case
+    }
+  }
+}
+```
+
+### Fig. 4b. Species Exclusive to `r params$ctrl_label`
+
+```{r excl-ctrl}
+req <- c("ggplot2")
+if (!has_pkgs(req) || is.null(prev_tbl) || !nrow(prev_tbl) || is.null(ctrl_unique) || !nrow(ctrl_unique)) {
+  box_tag("No control-exclusive species are available for this visualization.", "warning")
+} else {
+  species_col  <- colnames(ctrl_unique)[1]
+  ctrl_species <- unique(ctrl_unique[[species_col]])
+  sp_data_c    <- prev_tbl[prev_tbl$taxon %in% ctrl_species, , drop = FALSE]
+  if (!nrow(sp_data_c)) {
+    box_tag("The control-exclusive species list does not match the prevalence table.", "warning")
+  } else {
+    ctrl_prev_c  <- sp_data_c[sp_data_c[[params$group_col]] == params$ctrl_label, c("taxon", "prevalence"), drop = FALSE]
+    ord_c        <- ctrl_prev_c$taxon[order(ctrl_prev_c$prevalence, decreasing = FALSE)]
+    sp_data_c$taxon <- factor(sp_data_c$taxon, levels = ord_c)
+
+    max_prev_c  <- max(sp_data_c$prevalence, na.rm = TRUE)
+    max_abund_c <- max(sp_data_c$mean_rel_abundance * 100, na.rm = TRUE)
+    ab_scale_c  <- if (is.finite(max_abund_c) && max_abund_c > 0) max_prev_c / max_abund_c else 1
+
+    p_ctrl <- ggplot2::ggplot(sp_data_c, ggplot2::aes(x = taxon)) +
+      ggplot2::geom_bar(
+        ggplot2::aes(
+          y    = prevalence,
+          fill = .data[[params$group_col]],
+          text = paste0("Taxon: ", taxon, "<br>Prevalence: ", prevalence)
+        ),
+        stat = "identity",
+        position = "dodge", alpha = 0.55, width = 0.7
+      ) +
+      ggplot2::geom_point(
+        ggplot2::aes(
+          y     = mean_rel_abundance * 100 * ab_scale_c,
+          color = .data[[params$group_col]],
+          text  = paste0("Taxon: ", taxon, "<br>Mean relative abundance (%): ",
+                         signif(mean_rel_abundance * 100, 3))
+        ),
+        position = ggplot2::position_dodge(width = 0.7), size = 2.8
+      ) +
+      ggplot2::scale_fill_manual(values = group_colors) +
+      ggplot2::scale_color_manual(values = group_colors) +
+      ggplot2::scale_y_continuous(
+        name     = "Prevalence (N samples)",
+        sec.axis = ggplot2::sec_axis(~ . / ab_scale_c, name = "Mean relative abundance (%)")
+      ) +
+      ggplot2::coord_flip() +
+      ggplot2::labs(x = "", fill = NULL, color = NULL) +
+      ggplot2::theme_minimal(base_size = 10)
+
+    if (isTRUE(pkg_status[["plotly"]])) plotly::ggplotly(p_ctrl, tooltip = "text") else p_ctrl
+  }
+}
+```
+
+Differential Abundance {data-navmenu="Informative Species"}
+=====================================
+
+Column {data-width=280}
+-------------------------------------
+
+### Differential Abundance
+
+**Fig. 7.** Volcano plot of differential abundance results. X-axis: log₂ fold-change
+(`r params$case_label` vs `r params$ctrl_label`); Y-axis: −log₁₀(adjusted p-value).
+Point size reflects mean relative abundance. Dashed lines mark significance (padj < 0.05)
+and effect-size (|log₂FC| ≥ 1) thresholds.
+
+Column {data-width=720}
+-------------------------------------
+
+### Volcano plot
+
+```{r}
+req <- c("ggplot2")
+if (!has_pkgs(req) || is.null(da_res) || !nrow(da_res)) {
+  box_tag("No differential abundance results are available.", "warning")
+} else {
+  da_res$neglog10_padj <- -log10(da_res$padj + 1e-300)
+  da_res$point_size <- if ("baseMean_rel" %in% colnames(da_res)) da_res$baseMean_rel else 3
+  da_res$sig_chr <- as.character(as.logical(da_res$sig))
+  label_df <- da_res[!is.na(da_res$padj) & da_res$padj < 0.05 & abs(da_res$log2fc) >= 1, , drop = FALSE]
+  p_volc <- ggplot2::ggplot(
+    da_res,
+    ggplot2::aes(
+      x = log2fc,
+      y = neglog10_padj,
+      color = sig_chr,
+      size = point_size,
+      text = paste0(
+        "Species: ", feature_id,
+        "<br>log2FC: ", signif(log2fc, 4),
+        "<br>padj: ", signif(padj, 4)
+      )
+    )
+  ) +
+    ggplot2::geom_point(alpha = 0.75) +
+    ggplot2::geom_vline(xintercept = c(-1, 1), linetype = "dashed", color = "grey40") +
+    ggplot2::geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey40") +
+    ggplot2::scale_color_manual(
+      values = c("TRUE" = unname(group_colors[params$case_label]), "FALSE" = "grey60"),
+      labels = c("TRUE" = "Yes", "FALSE" = "No")
+    ) +
+    ggplot2::labs(x = "log2 fold-change", y = "-log10(adjusted p-value)", color = "Significant", size = "Mean relative abundance") +
+    ggplot2::theme_minimal(base_size = 10)
+  if (requireNamespace("ggrepel", quietly = TRUE) && nrow(label_df)) {
+    p_volc <- p_volc + ggrepel::geom_text_repel(data = label_df, ggplot2::aes(label = feature_id), size = 2.8, show.legend = FALSE)
+  }
+  if (isTRUE(pkg_status[["plotly"]])) {
+    plotly::ggplotly(p_volc, tooltip = "text")
+  } else {
+    p_volc
+  }
+}
+```
+
+### Significant Species
+
+```{r}
+if (is.null(da_res) || !nrow(da_res)) {
+  box_tag("No differential abundance table is available.", "warning")
+} else {
+  sig_df <- da_res[as.logical(da_res$sig) %in% TRUE, intersect(c("feature_id", "log2fc", "padj", "sig"), colnames(da_res)), drop = FALSE]
+  if (nrow(sig_df)) sig_df <- sig_df[order(sig_df$padj), , drop = FALSE]
+  build_dt(sig_df)
+}
+```
+
+Informative Species {data-navmenu="Informative Species"}
+=====================================
+
+Column {data-width=280}
+-------------------------------------
+
+### Informative Species
+
+Species prioritized by Random Forest (RF) and Linear Discriminant Analysis (LDA).
+RF accuracy (CV): `r flags_val("rf_cv_accuracy", "11_informative", "N/A")`
+
+**Fig. 8.** RF feature importance (Mean Decrease Accuracy). Higher values indicate
+greater contribution to group discrimination.
+
+**Fig. 9.** LDA coefficients (points) and mean relative abundance by group (bars)
+for the top informative species. Positive LD1 = enriched in `r params$case_label`;
+negative = enriched in `r params$ctrl_label`. The secondary axis (top) shows the
+mean relative abundance scale (%).
+
+**Fig. 10.** PCoA (Bray-Curtis) based only on the top RF informative species.
+Restricting the feature space to the most discriminating taxa often reveals
+clearer group separation than community-wide ordination.
+
+Column {data-width=720}
+-------------------------------------
+
+### Fig. 8. Random Forest Feature Importance
+
+```{r rf-plot}
+req <- c("ggplot2")
+if (!has_pkgs(req) || is.null(rf_imp) || !nrow(rf_imp)) {
+  box_tag("No Random Forest results are available.", "warning")
+} else {
+  rf_top       <- rf_imp[order(rf_imp$importance, decreasing = TRUE), , drop = FALSE]
+  rf_top       <- head(rf_top, 20L)
+  rf_top$label <- factor(rf_top$feature_id, levels = rev(rf_top$feature_id))
+
+  p_rf <- ggplot2::ggplot(
+    rf_top,
+    ggplot2::aes(
+      x    = importance,
+      y    = label,
+      text = paste0("Species: ", feature_id, "<br>Importance: ", signif(importance, 4))
+    )
+  ) +
+    ggplot2::geom_point(size = 2.8, color = "steelblue") +
+    ggplot2::geom_segment(
+      ggplot2::aes(x = 0, xend = importance, y = label, yend = label),
+      color = "grey70", linewidth = 0.5
+    ) +
+    ggplot2::labs(
+      title = "Top 20 informative species (RF)",
+      x     = "Mean Decrease Accuracy",
+      y     = ""
+    ) +
+    ggplot2::theme_minimal(base_size = 10) +
+    ggplot2::theme(legend.position = "none")
+
+  if (isTRUE(pkg_status[["plotly"]])) plotly::ggplotly(p_rf, tooltip = "text") else p_rf
+}
+```
+
+### Fig. 9. LDA Coefficients and Mean Relative Abundance
+
+```{r lda-plot}
+if (is.null(lda_scores) || !nrow(lda_scores) ||
+    is.null(tss) || is.null(meta) ||
+    !params$sample_id_col %in% colnames(meta) ||
+    !params$group_col %in% colnames(meta)) {
+  box_tag("No LDA results are available.", "warning")
+} else {
+  lda_df      <- lda_scores[order(abs(lda_scores$LD1), decreasing = TRUE), , drop = FALSE]
+  lda_df      <- head(lda_df, min(20L, nrow(lda_df)))
+  meta_lda    <- meta[, unique(c(params$sample_id_col, params$group_col)), drop = FALSE]
+  merged_tss  <- merge(tss, meta_lda, by.x = "sample_id", by.y = params$sample_id_col)
+  merged_tss  <- merged_tss[merged_tss[[params$group_col]] %in% group_levels, , drop = FALSE]
+
+  if (!nrow(merged_tss) || !all(lda_df$feature_id %in% colnames(merged_tss))) {
+    box_tag("The LDA species do not match the abundance table.", "warning")
+  } else {
+    mat      <- as.matrix(merged_tss[, lda_df$feature_id, drop = FALSE])
+    grp      <- merged_tss[[params$group_col]]
+    rs       <- rowSums(mat); rs[rs == 0] <- 1
+    mat_tss  <- sweep(mat, 1, rs, "/")
+    case_idx <- grp == params$case_label
+    ctrl_idx <- grp == params$ctrl_label
+    mean_case <- colMeans(mat_tss[case_idx, , drop = FALSE], na.rm = TRUE)
+    mean_ctrl <- colMeans(mat_tss[ctrl_idx, , drop = FALSE], na.rm = TRUE)
+    total     <- mean_case + mean_ctrl; total[total == 0] <- 1
+    plot_df   <- rbind(
+      data.frame(feature_id = names(mean_case), side = params$case_label,
+                 mean_norm_abundance = (mean_case / total) * 100,  stringsAsFactors = FALSE),
+      data.frame(feature_id = names(mean_ctrl), side = params$ctrl_label,
+                 mean_norm_abundance = -(mean_ctrl / total) * 100, stringsAsFactors = FALSE)
+    )
+    plot_df$LD1      <- lda_df$LD1[match(plot_df$feature_id, lda_df$feature_id)]
+    ld1_max          <- max(abs(plot_df$LD1), na.rm = TRUE)
+    plot_df$LD1_plot <- if (is.finite(ld1_max) && ld1_max > 0) (plot_df$LD1 / ld1_max) * 100 else 0
+    plot_df$group    <- ifelse(plot_df$LD1 >= 0, params$case_label, params$ctrl_label)
+
+    feat_order   <- lda_df$feature_id[order(lda_df$LD1)]
+    plot_df$label <- factor(plot_df$feature_id, levels = feat_order)
+
+    p_lda <- ggplot2::ggplot(plot_df) +
+      ggplot2::geom_col(
+        ggplot2::aes(
+          x    = label,
+          y    = mean_norm_abundance,
+          fill = side,
+          text = paste0("Species: ", feature_id,
+                        "<br>Mean relative abundance: ", signif(abs(mean_norm_abundance), 4), "%")
+        ),
+        alpha = 0.5
+      ) +
+      ggplot2::geom_point(
+        ggplot2::aes(
+          x     = label,
+          y     = LD1_plot,
+          color = group,
+          text  = paste0("Species: ", feature_id, "<br>LD1 (normalized): ", signif(LD1, 4))
+        ),
+        size = 2.5
+      ) +
+      ggplot2::geom_hline(yintercept = 0, color = "black", linewidth = 0.4) +
+      ggplot2::coord_flip() +
+      ggplot2::scale_fill_manual(values = group_colors) +
+      ggplot2::scale_color_manual(values = group_colors) +
+      ggplot2::scale_y_continuous(
+        name     = "Normalized LD1 coefficient",
+        labels   = function(x) paste0(abs(x)),
+        limits   = c(-105, 105),
+        sec.axis = ggplot2::sec_axis(
+          ~ .,
+          name   = "Mean relative abundance (%)",
+          labels = function(x) paste0(abs(x))
+        )
+      ) +
+      ggplot2::labs(x = "", fill = NULL, color = NULL) +
+      ggplot2::theme_minimal(base_size = 10)
+
+    print(p_lda)
+  }
+}
+```
+
+### Fig. 10. PCoA — Informative Species
+
+```{r infobeta-plot}
+if (is.null(info_pcoa) || !nrow(info_pcoa)) {
+  box_tag("No informative-species PCoA data available (run step 11 first).", "info")
+} else if (!requireNamespace("ggplot2", quietly = TRUE)) {
+  box_tag("ggplot2 is required for this plot.", "warning")
+} else {
+  req_cols <- c("sample_id", "PC1", "PC2", "group", "pct1", "pct2",
+                "permanova_R2", "permanova_p")
+  if (!all(req_cols %in% colnames(info_pcoa))) {
+    box_tag("informative_pcoa.tsv is missing required columns.", "warning")
+  } else {
+    df_ib <- info_pcoa[info_pcoa$group %in% group_levels, , drop = FALSE]
+    if (!nrow(df_ib)) {
+      box_tag("No informative-species PCoA rows remain after group filtering.", "info")
+    } else {
+      ann_ib <- paste0("R2 = ", signif(df_ib$permanova_R2[1], 3),
+                       " | p = ", signif(df_ib$permanova_p[1], 3))
+      p_ib <- ggplot2::ggplot(
+        df_ib,
+        ggplot2::aes(x = PC1, y = PC2, color = group,
+                     text = paste0("Sample: ", sample_id, "<br>Group: ", group))
+      ) +
+        ggplot2::geom_point(size = 2.2, alpha = 0.85)
+      if (length(unique(df_ib$group)) > 1 && all(table(df_ib$group) >= 3))
+        p_ib <- p_ib + ggplot2::stat_ellipse(level = 0.95, linetype = 2)
+      p_ib <- p_ib +
+        ggplot2::annotate("text", x = -Inf, y = Inf, label = ann_ib,
+                 hjust = -0.05, vjust = 1.2, size = 3) +
+        ggplot2::scale_color_manual(values = group_colors) +
+        ggplot2::labs(
+          title = "PCoA Bray-Curtis — informative species only",
+          x     = paste0("PCoA1 (", df_ib$pct1[1], "%)"),
+          y     = paste0("PCoA2 (", df_ib$pct2[1], "%)"),
+          color = "Group"
+        ) +
+        ggplot2::theme_minimal(base_size = 10)
+      if (isTRUE(pkg_status[["plotly"]])) plotly::ggplotly(p_ib, tooltip = "text") else p_ib
+    }
+  }
+}
+```

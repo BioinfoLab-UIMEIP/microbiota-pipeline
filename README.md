@@ -141,7 +141,7 @@ The taxonomy cascade is configured in the project config file. Each database pat
 
 | Database | Used in | Config variable | Download |
 |----------|---------|-----------------|----------|
-| SILVA 138.2 NR99 trainset + species | `05_tax.R` | `SILVA_TRAINSET`, `SILVA_SPECIES` | <https://zenodo.org/record/8392695> |
+| SILVA 138.2 NR99 trainset + species | `05_tax.R` | `SILVA_TRAINSET`, `SILVA_SPECIES` | <https://zenodo.org/records/14169026> |
 | Specialized database (optional; e.g., HOMD for oral/gastric studies) | `05_tax.R` | `HOMD_TRAINSET`, `HOMD_SPECIES` | site-specific (e.g., <https://www.homd.org/ftp/>) |
 | RefSeq RNA BLAST database | `05_tax.R` | `REFSEQ_BLASTDB` | NCBI `update_blastdb.pl 16S_ribosomal_RNA` |
 

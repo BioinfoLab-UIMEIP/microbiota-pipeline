@@ -121,9 +121,7 @@ conda install -c conda-forge \
 All external tools can be installed into the same `microbiota_pipeline` conda environment used for R.
 
 ```bash
-conda install -c bioconda -c conda-forge \
-  cutadapt vsearch mafft snp-dists blast \
-  -y
+conda install -c bioconda -c conda-forge cutadapt vsearch mafft snp-dists blast python=3.9 -y
 ```
 
 | Tool | Used in | Install | Verify |
